@@ -1,0 +1,40 @@
+{
+    "white" : {
+        "Type" : "principled",
+	    "baseColor" :	[1.0,1.0,1.0],
+        "metallic" : 0.0,
+        "diffuse" :0.8,
+        "specular" : 0.0
+    },
+    "red" : {
+        "Type" : "principled",
+	    "baseColor" :	[1.0,0.0,0.0],
+        "metallic" : 0.0,
+        "diffuse" :0.8,
+        "specular" : 0.0
+    },
+    "green" : {
+        "Type" : "principled",
+	    "baseColor" :	[0.0,1.0,0.0],
+        "metallic" : 0.0,
+        "diffuse" :0.8,
+        "specular" : 0.0
+    },
+    "blue" : {
+        "Type" : "alloy",
+	    "color" :	[0.0,0.0,0.5],
+        "edgeColor" : [0.0,0.0,0.8],
+        "roughness" :0.1
+    },
+    "light" : {
+        "Type" : "luminous",
+	    "color" :	[1.0,1.0,1.0]
+    },
+    "glass" : {
+        "Type" : "thinGlass",
+        "eta" : 1.5,
+	    "attenuationColor" :	[0.5,0.0,0.0],
+        "attenuationDistance" : 1.0,
+        "thickness" : 0.1
+    }
+}

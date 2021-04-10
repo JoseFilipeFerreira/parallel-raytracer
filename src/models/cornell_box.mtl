@@ -1,0 +1,33 @@
+newmtl white
+Ka 0 0 0
+Kd 1 1 1
+Ks 0 0 0
+
+newmtl red
+Ka 0 0 0
+Kd 1 0 0
+Ks 0 0 0
+
+newmtl green
+Ka 0 0 0
+Kd 0 1 0
+Ks 0 0 0
+
+newmtl blue
+Ka 0 0 0
+Kd 0 0 1
+Ks 0 0 0
+
+newmtl light
+Ke 1 1 1
+illum 11
+
+newmtl glass
+Ka 0.576471 0.647059 0.666667
+Kd 0.576471 0.647059 0.666667
+Ks 0.576471 0.647059 0.666667
+illum 2
+
+ 
+ 
+
