@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -68,6 +69,87 @@ bool occlusion(
         }
     }
     return false;
+}
+
+void calculate_line(
+    int line,
+    int image_width,
+    int image_height,
+    std::vector<tracer::vec3<float>>& image,
+    tracer::camera cam,
+    tracer::scene SceneMesh) {
+
+    std::uniform_real_distribution<float> distrib(0, 1.f);
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    for (int w = 0; w < image_width; w++) {
+        size_t geomID = -1;
+        size_t primID = -1;
+
+        auto is = float(w) / (image_width - 1);
+        auto it = float(line) / (image_height - 1);
+        auto ray = cam.get_ray(is, it);
+
+        float t = std::numeric_limits<float>::max();
+        float u = 0;
+        float v = 0;
+        if (intersect(SceneMesh, ray.origin, ray.dir, t, u, v, geomID, primID)) {
+            auto i = geomID;
+            auto f = primID;
+            auto face = SceneMesh.geometry[i].face_index[f];
+            auto N = normalize(cross(
+                SceneMesh.geometry[i].vertex[face[1]] - SceneMesh.geometry[i].vertex[face[0]],
+                SceneMesh.geometry[i].vertex[face[2]] - SceneMesh.geometry[i].vertex[face[0]]));
+
+            if (!SceneMesh.geometry[i].normals.empty()) {
+                auto N0 = SceneMesh.geometry[i].normals[face[0]];
+                auto N1 = SceneMesh.geometry[i].normals[face[1]];
+                auto N2 = SceneMesh.geometry[i].normals[face[2]];
+                N = normalize(N1 * u + N2 * v + N0 * (1 - u - v));
+            }
+
+            for (auto& lightID : SceneMesh.light_sources) {
+                auto light = SceneMesh.geometry[lightID];
+                light.face_index.size();
+                std::uniform_int_distribution<int> distrib1(0, light.face_index.size() - 1);
+
+                int faceID = distrib1(gen);
+                const auto& v0 = light.vertex[faceID];
+                const auto& v1 = light.vertex[faceID];
+                const auto& v2 = light.vertex[faceID];
+
+                auto P = v0 + ((v1 - v0) * float(distrib(gen)) + (v2 - v0) * float(distrib(gen)));
+
+                auto hit = ray.origin + ray.dir * (t - std::numeric_limits<float>::epsilon());
+                auto L = P - hit;
+
+                auto len = tracer::length(L);
+
+                t = len - std::numeric_limits<float>::epsilon();
+
+                L = tracer::normalize(L);
+
+                auto mat = SceneMesh.geometry[i].object_material;
+                auto c = (mat.ka * 0.5f + mat.ke) / float(SceneMesh.light_sources.size());
+
+                if (occlusion(SceneMesh, hit, L, t)) continue;
+
+                auto d = dot(N, L);
+
+                if (d <= 0) continue;
+
+                auto H = normalize((N + L) * 2.f);
+
+                c = c + (mat.kd * d + mat.ks * pow(dot(N, H), mat.Ns)) /
+                            float(SceneMesh.light_sources.size());
+
+                image[line * image_width + w].r += c.r;
+                image[line * image_width + w].g += c.g;
+                image[line * image_width + w].b += c.b;
+            }
+        }
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -146,84 +228,20 @@ int main(int argc, char* argv[]) {
         eye, look, tracer::vec3<float>(0, 1, 0), 60, float(image_width) / image_height);
     // Render
 
-    tracer::vec3<float>* image = new tracer::vec3<float>[image_height * image_width];
+    auto image = std::vector<tracer::vec3<float>>(image_height * image_width);
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
     std::vector<std::thread> threads;
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> distrib(0, 1.f);
-    for (int h = image_height - 1; h >= 0; --h) {
-        for (int w = 0; w < image_width; w++) {
-            size_t geomID = -1;
-            size_t primID = -1;
-
-            auto is = float(w) / (image_width - 1);
-            auto it = float(h) / (image_height - 1);
-            auto ray = cam.get_ray(is, it);
-
-            float t = std::numeric_limits<float>::max();
-            float u = 0;
-            float v = 0;
-            if (intersect(SceneMesh, ray.origin, ray.dir, t, u, v, geomID, primID)) {
-                auto i = geomID;
-                auto f = primID;
-                auto face = SceneMesh.geometry[i].face_index[f];
-                auto N = normalize(cross(
-                    SceneMesh.geometry[i].vertex[face[1]] - SceneMesh.geometry[i].vertex[face[0]],
-                    SceneMesh.geometry[i].vertex[face[2]] - SceneMesh.geometry[i].vertex[face[0]]));
-
-                if (!SceneMesh.geometry[i].normals.empty()) {
-                    auto N0 = SceneMesh.geometry[i].normals[face[0]];
-                    auto N1 = SceneMesh.geometry[i].normals[face[1]];
-                    auto N2 = SceneMesh.geometry[i].normals[face[2]];
-                    N = normalize(N1 * u + N2 * v + N0 * (1 - u - v));
-                }
-
-                for (auto& lightID : SceneMesh.light_sources) {
-                    auto light = SceneMesh.geometry[lightID];
-                    light.face_index.size();
-                    std::uniform_int_distribution<int> distrib1(0, light.face_index.size() - 1);
-
-                    int faceID = distrib1(gen);
-                    const auto& v0 = light.vertex[faceID];
-                    const auto& v1 = light.vertex[faceID];
-                    const auto& v2 = light.vertex[faceID];
-
-                    auto P =
-                        v0 + ((v1 - v0) * float(distrib(gen)) + (v2 - v0) * float(distrib(gen)));
-
-                    auto hit = ray.origin + ray.dir * (t - std::numeric_limits<float>::epsilon());
-                    auto L = P - hit;
-
-                    auto len = tracer::length(L);
-
-                    t = len - std::numeric_limits<float>::epsilon();
-
-                    L = tracer::normalize(L);
-
-                    auto mat = SceneMesh.geometry[i].object_material;
-                    auto c = (mat.ka * 0.5f + mat.ke) / float(SceneMesh.light_sources.size());
-
-                    if (occlusion(SceneMesh, hit, L, t)) continue;
-
-                    auto d = dot(N, L);
-
-                    if (d <= 0) continue;
-
-                    auto H = normalize((N + L) * 2.f);
-
-                    c = c + (mat.kd * d + mat.ks * pow(dot(N, H), mat.Ns)) /
-                                float(SceneMesh.light_sources.size());
-
-                    image[h * image_width + w].r += c.r;
-                    image[h * image_width + w].g += c.g;
-                    image[h * image_width + w].b += c.b;
-                }
-            }
-        }
+    for (int line = image_height - 1; line >= 0; --line) {
+        threads.push_back(std::thread(
+            calculate_line, line, image_width, image_height, std::ref(image), cam, SceneMesh));
     }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
     auto end_time = std::chrono::high_resolution_clock::now();
 
     std::cerr
@@ -244,6 +262,5 @@ int main(int argc, char* argv[]) {
             file << int(img.r * 255) << " " << int(img.g * 255) << " " << int(img.b * 255) << "\n";
         }
     }
-    delete[] image;
     return 0;
 }
