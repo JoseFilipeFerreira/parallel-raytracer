@@ -4,13 +4,16 @@
 #include "scene/scene.h"
 #include "scene/sceneloader.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -71,46 +74,50 @@ bool occlusion(
     return false;
 }
 
-void calculate_line(
-    int line,
-    int image_width,
-    int image_height,
-    std::vector<tracer::vec3<float>>& image,
-    tracer::camera cam,
-    tracer::scene SceneMesh) {
+struct RenderEnv {
+    int image_width;
+    int image_height;
+    std::vector<tracer::vec3<float>>& image;
+    tracer::camera& cam;
+    tracer::scene& SceneMesh;
+};
+
+void calculate_line(RenderEnv render_env, int line) {
 
     std::uniform_real_distribution<float> distrib(0, 1.f);
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    for (int w = 0; w < image_width; w++) {
+    for (int w = 0; w < render_env.image_width; w++) {
         size_t geomID = -1;
         size_t primID = -1;
 
-        auto is = float(w) / (image_width - 1);
-        auto it = float(line) / (image_height - 1);
-        auto ray = cam.get_ray(is, it);
+        auto is = float(w) / (render_env.image_width - 1);
+        auto it = float(line) / (render_env.image_height - 1);
+        auto ray = render_env.cam.get_ray(is, it);
 
         float t = std::numeric_limits<float>::max();
         float u = 0;
         float v = 0;
-        if (intersect(SceneMesh, ray.origin, ray.dir, t, u, v, geomID, primID)) {
+        if (intersect(render_env.SceneMesh, ray.origin, ray.dir, t, u, v, geomID, primID)) {
             auto i = geomID;
             auto f = primID;
-            auto face = SceneMesh.geometry[i].face_index[f];
+            auto face = render_env.SceneMesh.geometry[i].face_index[f];
             auto N = normalize(cross(
-                SceneMesh.geometry[i].vertex[face[1]] - SceneMesh.geometry[i].vertex[face[0]],
-                SceneMesh.geometry[i].vertex[face[2]] - SceneMesh.geometry[i].vertex[face[0]]));
+                render_env.SceneMesh.geometry[i].vertex[face[1]] -
+                    render_env.SceneMesh.geometry[i].vertex[face[0]],
+                render_env.SceneMesh.geometry[i].vertex[face[2]] -
+                    render_env.SceneMesh.geometry[i].vertex[face[0]]));
 
-            if (!SceneMesh.geometry[i].normals.empty()) {
-                auto N0 = SceneMesh.geometry[i].normals[face[0]];
-                auto N1 = SceneMesh.geometry[i].normals[face[1]];
-                auto N2 = SceneMesh.geometry[i].normals[face[2]];
+            if (!render_env.SceneMesh.geometry[i].normals.empty()) {
+                auto N0 = render_env.SceneMesh.geometry[i].normals[face[0]];
+                auto N1 = render_env.SceneMesh.geometry[i].normals[face[1]];
+                auto N2 = render_env.SceneMesh.geometry[i].normals[face[2]];
                 N = normalize(N1 * u + N2 * v + N0 * (1 - u - v));
             }
 
-            for (auto& lightID : SceneMesh.light_sources) {
-                auto light = SceneMesh.geometry[lightID];
+            for (auto& lightID : render_env.SceneMesh.light_sources) {
+                auto light = render_env.SceneMesh.geometry[lightID];
                 light.face_index.size();
                 std::uniform_int_distribution<int> distrib1(0, light.face_index.size() - 1);
 
@@ -130,10 +137,11 @@ void calculate_line(
 
                 L = tracer::normalize(L);
 
-                auto mat = SceneMesh.geometry[i].object_material;
-                auto c = (mat.ka * 0.5f + mat.ke) / float(SceneMesh.light_sources.size());
+                auto mat = render_env.SceneMesh.geometry[i].object_material;
+                auto c =
+                    (mat.ka * 0.5f + mat.ke) / float(render_env.SceneMesh.light_sources.size());
 
-                if (occlusion(SceneMesh, hit, L, t)) continue;
+                if (occlusion(render_env.SceneMesh, hit, L, t)) continue;
 
                 auto d = dot(N, L);
 
@@ -142,12 +150,77 @@ void calculate_line(
                 auto H = normalize((N + L) * 2.f);
 
                 c = c + (mat.kd * d + mat.ks * pow(dot(N, H), mat.Ns)) /
-                            float(SceneMesh.light_sources.size());
+                            float(render_env.SceneMesh.light_sources.size());
 
-                image[line * image_width + w].r += c.r;
-                image[line * image_width + w].g += c.g;
-                image[line * image_width + w].b += c.b;
+                render_env.image[line * render_env.image_width + w].r += c.r;
+                render_env.image[line * render_env.image_width + w].g += c.g;
+                render_env.image[line * render_env.image_width + w].b += c.b;
             }
+        }
+    }
+}
+
+class WorkQueue {
+    std::deque<std::tuple<size_t, size_t>> queue;
+    std::mutex lock;
+    std::condition_variable notempty;
+    std::atomic_bool sender_closed = false;
+
+  public:
+    auto enqueue(std::tuple<size_t, size_t> unit) {
+        std::unique_lock<std::mutex> guard(lock);
+        queue.push_back(unit);
+        notempty.notify_all();
+    }
+    auto dequeue() -> std::tuple<size_t, size_t> {
+        std::unique_lock<std::mutex> guard(lock);
+        notempty.wait(guard, [&] { return !queue.empty(); });
+        auto v = queue.front();
+        queue.pop_front();
+        return v;
+    }
+    auto has_work() -> bool {
+        if (!sender_closed) {
+            return true;
+        } else {
+            std::unique_lock<std::mutex> guard(lock);
+            return !queue.empty();
+        }
+    }
+    auto close_sender() { sender_closed = true; }
+};
+
+class Receiver {
+    std::shared_ptr<WorkQueue> work_queue;
+
+  public:
+    Receiver(std::shared_ptr<WorkQueue> q): work_queue(q) {}
+
+    auto receive() -> std::optional<std::tuple<size_t, size_t>> {
+        if (work_queue->has_work())
+            return work_queue->dequeue();
+        else
+            return {};
+    }
+};
+
+class Sender {
+    std::shared_ptr<WorkQueue> work_queue;
+
+  public:
+    Sender(): work_queue(std::shared_ptr<WorkQueue>(new WorkQueue())) {}
+    auto send(std::tuple<size_t, size_t> data) { work_queue->enqueue(data); }
+    auto make_receiver() -> Receiver { return Receiver(work_queue); };
+    ~Sender() { work_queue->close_sender(); };
+    Sender(const Sender&) = delete;
+    Sender(Sender&& rhs) noexcept: work_queue(std::move(rhs.work_queue)) {}
+    Sender& operator=(const Sender&) = delete;
+};
+
+void worker(Receiver rx, RenderEnv render_env) {
+    while (auto piece = rx.receive()) {
+        for (size_t line = std::get<0>(*piece); line < std::get<1>(*piece); line++) {
+            calculate_line(render_env, line);
         }
     }
 }
@@ -226,18 +299,31 @@ int main(int argc, char* argv[]) {
 
     tracer::camera cam(
         eye, look, tracer::vec3<float>(0, 1, 0), 60, float(image_width) / image_height);
+
     // Render
-
     auto image = std::vector<tracer::vec3<float>>(image_height * image_width);
-
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    std::vector<std::thread> threads;
-    for (int line = image_height - 1; line >= 0; --line) {
-        threads.push_back(std::thread(
-            calculate_line, line, image_width, image_height, std::ref(image), cam, SceneMesh));
-    }
+    RenderEnv render_env = {
+        .image_width = image_width,
+        .image_height = image_height,
+        .image = image,
+        .cam = cam,
+        .SceneMesh = SceneMesh};
 
+    // Create workers
+    std::vector<std::thread> threads;
+    {
+        Sender tx;
+        for (int i = 0; i < std::thread::hardware_concurrency(); i++) {
+            threads.push_back(std::thread(worker, tx.make_receiver(), render_env));
+        }
+
+        // Populate work queue
+        for (int line = 0; line < image_height; line++) {
+            tx.send({line, line + 1});
+        }
+    }
     for (auto& t : threads) {
         t.join();
     }

@@ -38,3 +38,5 @@ CMakeCache.txt
 cmake
 cmake_install.cmake
 output.ppm
+.cache
+compile_commands.json
