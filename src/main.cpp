@@ -20,56 +20,37 @@
 #include <thread>
 #include <type_traits>
 
-bool intersect(
-    const tracer::scene& SceneMesh,
-    const tracer::vec3<float>& ori,
-    const tracer::vec3<float>& dir,
+auto intersect(
+    const tracer::FlatScene& flat_scene,
+    const tracer::ray& ray,
     float& t,
     float& u,
     float& v,
     size_t& geomID,
-    size_t& primID) {
-    for (auto i = 0; i < SceneMesh.geometry.size(); i++) {
-        for (auto f = 0; f < SceneMesh.geometry[i].face_index.size(); f++) {
-            auto face = SceneMesh.geometry[i].face_index[f];
-            if (tracer::intersect_triangle(
-                    ori,
-                    dir,
-                    SceneMesh.geometry[i].vertex[face[0]],
-                    SceneMesh.geometry[i].vertex[face[1]],
-                    SceneMesh.geometry[i].vertex[face[2]],
-                    t,
-                    u,
-                    v)) {
-                geomID = i;
-                primID = f;
-            }
+    size_t& primID) -> std::optional<tracer::triangle> {
+
+    std::optional<tracer::triangle> res = {};
+    for (auto const& triangle : flat_scene.triangles) {
+        if (tracer::intersect_triangle(
+                ray.origin, ray.dir, triangle.p0, triangle.p1, triangle.p2, t, u, v)) {
+            geomID = triangle.geomID;
+            primID = triangle.primID;
+            res = triangle;
         }
     }
-    return (geomID != -1 && primID != -1);
+    return res;
 }
 
-bool occlusion(
-    const tracer::scene& SceneMesh,
+auto occlusion(
+    const tracer::FlatScene& flat_scene,
     const tracer::vec3<float>& ori,
     const tracer::vec3<float>& dir,
-    float& t) {
+    float& t) -> bool {
     float u, v;
-    for (auto i = 0; i < SceneMesh.geometry.size(); i++) {
-        for (auto f = 0; f < SceneMesh.geometry[i].face_index.size(); f++) {
-            auto face = SceneMesh.geometry[i].face_index[f];
-            if (tracer::intersect_triangle(
-                    ori,
-                    dir,
-                    SceneMesh.geometry[i].vertex[face[0]],
-                    SceneMesh.geometry[i].vertex[face[1]],
-                    SceneMesh.geometry[i].vertex[face[2]],
-                    t,
-                    u,
-                    v)) {
-                return true;
-            }
-        }
+    for (auto const& triangle : flat_scene.triangles) {
+        if (tracer::intersect_triangle(ori, dir, triangle.p0, triangle.p1, triangle.p2, t, u, v)) {
+            return true;
+        };
     }
     return false;
 }
@@ -79,11 +60,10 @@ struct RenderEnv {
     int image_height;
     std::vector<tracer::vec3<float>>& image;
     tracer::camera& cam;
-    tracer::scene& SceneMesh;
+    tracer::FlatScene& flat_scene;
 };
 
 void calculate_line(RenderEnv render_env, int line) {
-
     std::uniform_real_distribution<float> distrib(0, 1.f);
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -99,49 +79,37 @@ void calculate_line(RenderEnv render_env, int line) {
         float t = std::numeric_limits<float>::max();
         float u = 0;
         float v = 0;
-        if (intersect(render_env.SceneMesh, ray.origin, ray.dir, t, u, v, geomID, primID)) {
+        if (auto triangle = intersect(render_env.flat_scene, ray, t, u, v, geomID, primID)) {
             auto i = geomID;
             auto f = primID;
-            auto face = render_env.SceneMesh.geometry[i].face_index[f];
-            auto N = normalize(cross(
-                render_env.SceneMesh.geometry[i].vertex[face[1]] -
-                    render_env.SceneMesh.geometry[i].vertex[face[0]],
-                render_env.SceneMesh.geometry[i].vertex[face[2]] -
-                    render_env.SceneMesh.geometry[i].vertex[face[0]]));
 
-            if (!render_env.SceneMesh.geometry[i].normals.empty()) {
-                auto N0 = render_env.SceneMesh.geometry[i].normals[face[0]];
-                auto N1 = render_env.SceneMesh.geometry[i].normals[face[1]];
-                auto N2 = render_env.SceneMesh.geometry[i].normals[face[2]];
-                N = normalize(N1 * u + N2 * v + N0 * (1 - u - v));
+            auto N = normalize(cross(triangle->p1 - triangle->p0, triangle->p2 - triangle->p0));
+
+            if (triangle->has_normal) {
+                N = normalize(triangle->n1 * u + triangle->n2 * v + triangle->n0 * (1 - u - v));
             }
 
-            for (auto& lightID : render_env.SceneMesh.light_sources) {
-                auto light = render_env.SceneMesh.geometry[lightID];
-                light.face_index.size();
-                std::uniform_int_distribution<int> distrib1(0, light.face_index.size() - 1);
+            for (auto const& light : render_env.flat_scene.light_sources) {
 
-                int faceID = distrib1(gen);
-                const auto& v0 = light.vertex[faceID];
-                const auto& v1 = light.vertex[faceID];
-                const auto& v2 = light.vertex[faceID];
+                std::uniform_int_distribution<int> distrib1(0, light.size() - 1);
+                auto const& light_triangle = light[distrib1(gen)];
 
-                auto P = v0 + ((v1 - v0) * float(distrib(gen)) + (v2 - v0) * float(distrib(gen)));
+                auto P = light_triangle.p0 +
+                         (light_triangle.p1 - light_triangle.p0) * float(distrib(gen)) +
+                         (light_triangle.p2 - light_triangle.p0) * float(distrib(gen));
 
                 auto hit = ray.origin + ray.dir * (t - std::numeric_limits<float>::epsilon());
                 auto L = P - hit;
 
-                auto len = tracer::length(L);
-
-                t = len - std::numeric_limits<float>::epsilon();
+                t = tracer::length(L) - std::numeric_limits<float>::epsilon();
 
                 L = tracer::normalize(L);
 
-                auto mat = render_env.SceneMesh.geometry[i].object_material;
+                auto mat = triangle->object_material;
                 auto c =
-                    (mat.ka * 0.5f + mat.ke) / float(render_env.SceneMesh.light_sources.size());
+                    (mat.ka * 0.5f + mat.ke) / float(render_env.flat_scene.light_sources.size());
 
-                if (occlusion(render_env.SceneMesh, hit, L, t)) continue;
+                if (occlusion(render_env.flat_scene, hit, L, t)) continue;
 
                 auto d = dot(N, L);
 
@@ -150,7 +118,7 @@ void calculate_line(RenderEnv render_env, int line) {
                 auto H = normalize((N + L) * 2.f);
 
                 c = c + (mat.kd * d + mat.ks * pow(dot(N, H), mat.Ns)) /
-                            float(render_env.SceneMesh.light_sources.size());
+                            float(render_env.flat_scene.light_sources.size());
 
                 render_env.image[line * render_env.image_width + w].r += c.r;
                 render_env.image[line * render_env.image_width + w].g += c.g;
@@ -286,13 +254,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    tracer::scene SceneMesh;
-    bool ModelLoaded = false;
-
-    if (modelname != "") {
-        SceneMesh = model::loadobj(modelname);
-        ModelLoaded = true;
-    }
+    if (modelname == "") return 1;
+    tracer::FlatScene flat_scene = model::loadobj(modelname);
 
     int image_width = windowSize.x;
     int image_height = windowSize.y;
@@ -309,7 +272,7 @@ int main(int argc, char* argv[]) {
         .image_height = image_height,
         .image = image,
         .cam = cam,
-        .SceneMesh = SceneMesh};
+        .flat_scene = flat_scene};
 
     // Create workers
     std::vector<std::thread> threads;
@@ -331,10 +294,11 @@ int main(int argc, char* argv[]) {
     auto end_time = std::chrono::high_resolution_clock::now();
 
     std::cerr
-        << "\n\n Duration : "
+        << "\nDuration: "
         << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count()
         << std::endl;
 
+    // Write image
     std::ofstream file(outputname, std::ios::out);
 
     file << "P3\n" << image_width << " " << image_height << "\n255\n";
