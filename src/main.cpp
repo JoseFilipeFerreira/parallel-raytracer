@@ -20,47 +20,12 @@
 #include <thread>
 #include <type_traits>
 
-auto intersect(
-    const tracer::FlatScene& flat_scene,
-    const tracer::ray& ray,
-    float& t,
-    float& u,
-    float& v,
-    size_t& geomID,
-    size_t& primID) -> std::optional<tracer::triangle> {
-
-    std::optional<tracer::triangle> res = {};
-    for (auto const& triangle : flat_scene.triangles) {
-        if (tracer::intersect_triangle(
-                ray.origin, ray.dir, triangle.p0, triangle.p1, triangle.p2, t, u, v)) {
-            geomID = triangle.geomID;
-            primID = triangle.primID;
-            res = triangle;
-        }
-    }
-    return res;
-}
-
-auto occlusion(
-    const tracer::FlatScene& flat_scene,
-    const tracer::vec3<float>& ori,
-    const tracer::vec3<float>& dir,
-    float& t) -> bool {
-    float u, v;
-    for (auto const& triangle : flat_scene.triangles) {
-        if (tracer::intersect_triangle(ori, dir, triangle.p0, triangle.p1, triangle.p2, t, u, v)) {
-            return true;
-        };
-    }
-    return false;
-}
-
 struct RenderEnv {
     int image_width;
     int image_height;
     std::vector<tracer::vec3<float>>& image;
     tracer::camera& cam;
-    tracer::FlatScene& flat_scene;
+    tracer::TreeScene& tree_scene;
 };
 
 void calculate_line(RenderEnv render_env, int line) {
@@ -69,9 +34,6 @@ void calculate_line(RenderEnv render_env, int line) {
     std::mt19937 gen(rd());
 
     for (int w = 0; w < render_env.image_width; w++) {
-        size_t geomID = -1;
-        size_t primID = -1;
-
         auto is = float(w) / (render_env.image_width - 1);
         auto it = float(line) / (render_env.image_height - 1);
         auto ray = render_env.cam.get_ray(is, it);
@@ -79,17 +41,14 @@ void calculate_line(RenderEnv render_env, int line) {
         float t = std::numeric_limits<float>::max();
         float u = 0;
         float v = 0;
-        if (auto triangle = intersect(render_env.flat_scene, ray, t, u, v, geomID, primID)) {
-            auto i = geomID;
-            auto f = primID;
-
+        if (auto triangle = render_env.tree_scene.intersect(ray, t, u, v)){
             auto N = normalize(cross(triangle->p1 - triangle->p0, triangle->p2 - triangle->p0));
 
             if (triangle->has_normal) {
                 N = normalize(triangle->n1 * u + triangle->n2 * v + triangle->n0 * (1 - u - v));
             }
 
-            for (auto const& light : render_env.flat_scene.light_sources) {
+            for (auto const& light : render_env.tree_scene.light_sources) {
 
                 std::uniform_int_distribution<int> distrib1(0, light.size() - 1);
                 auto const& light_triangle = light[distrib1(gen)];
@@ -107,9 +66,9 @@ void calculate_line(RenderEnv render_env, int line) {
 
                 auto mat = triangle->object_material;
                 auto c =
-                    (mat.ka * 0.5f + mat.ke) / float(render_env.flat_scene.light_sources.size());
+                    (mat.ka * 0.5f + mat.ke) / float(render_env.tree_scene.light_sources.size());
 
-                if (occlusion(render_env.flat_scene, hit, L, t)) continue;
+                if (render_env.tree_scene.oclusion(tracer::ray(hit, L), t)) continue;
 
                 auto d = dot(N, L);
 
@@ -118,7 +77,7 @@ void calculate_line(RenderEnv render_env, int line) {
                 auto H = normalize((N + L) * 2.f);
 
                 c = c + (mat.kd * d + mat.ks * pow(dot(N, H), mat.Ns)) /
-                            float(render_env.flat_scene.light_sources.size());
+                            float(render_env.tree_scene.light_sources.size());
 
                 render_env.image[line * render_env.image_width + w].r += c.r;
                 render_env.image[line * render_env.image_width + w].g += c.g;
@@ -255,7 +214,10 @@ int main(int argc, char* argv[]) {
     }
 
     if (modelname == "") return 1;
-    tracer::FlatScene flat_scene = model::loadobj(modelname);
+    std::cerr << "Loading scene\n";
+    auto scene = model::loadobj(modelname);
+    std::cerr << "Creating tree\n";
+    auto tree_scene = tracer::TreeScene::from_scene(scene);
 
     int image_width = windowSize.x;
     int image_height = windowSize.y;
@@ -272,9 +234,10 @@ int main(int argc, char* argv[]) {
         .image_height = image_height,
         .image = image,
         .cam = cam,
-        .flat_scene = flat_scene};
+        .tree_scene = tree_scene};
 
     // Create workers
+    std::cerr << "Rendering\n";
     std::vector<std::thread> threads;
     {
         Sender tx;

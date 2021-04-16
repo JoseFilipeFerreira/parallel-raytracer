@@ -1,6 +1,7 @@
 #pragma once
 #include <math.h>
 #include <string.h>
+#include <ostream>
 
 namespace tracer {
 template<typename T>
@@ -49,7 +50,15 @@ struct __attribute__((aligned(16))) vec3 {
 
     T& operator[](const unsigned& idx) { return data[idx]; }
     T operator[](const unsigned& idx) const { return data[idx]; }
+    template<typename Y>
+    auto friend operator<<(std::ostream&, vec3<Y> const&) -> std::ostream&;
 };
+
+template<typename T>
+auto operator<<(std::ostream& oss, vec3<T> const& vs) -> std::ostream& {
+    oss << vs.x << ' ' << vs.y << ' ' << vs.z;
+    return oss;
+}
 
 template<typename T>
 struct __attribute__((aligned(16))) vec2 {
