@@ -59,7 +59,7 @@ class AABB {
     AABB(tracer::vec3<float> min, tracer::vec3<float> max): min_point(min), max_point(max){};
     AABB(): min_point({0, 0, 0}), max_point({0, 0, 0}){};
 
-    auto intersect(const tracer::ray& ray) const -> bool {
+    auto intersect(const tracer::ray& ray) const -> std::optional<float> {
         tracer::vec3<float> dirfrac = {1.0f / ray.dir.x, 1.0f / ray.dir.y, 1.0f / ray.dir.z};
 
         float t1 = (min_point.x - ray.origin.x) * dirfrac.x;
@@ -72,17 +72,10 @@ class AABB {
         float tmin = std::max(std::max(std::min(t1, t2), std::min(t3, t4)), std::min(t5, t6));
         float tmax = std::min(std::min(std::max(t1, t2), std::max(t3, t4)), std::max(t5, t6));
 
-        // if tmax < 0, ray (line) is intersecting AABB, but the whole AABB is behind us
-        if (tmax < 0) {
-            return false;
-        }
-
-        // if tmin > tmax, ray doesn't intersect AABB
-        if (tmin > tmax) {
-            return false;
-        }
-
-        return true;
+        if (!(tmax < 0 || tmin > tmax))
+            return tmin;
+        else
+            return {};
     };
 
     auto split() const -> std::vector<AABB> {
@@ -122,6 +115,7 @@ class AABB {
 
     // TODO better triangle-AABB intersection
     auto is_inside(const triangle t) const -> bool {
+
         auto minx = std::min(std::min(t.p0.x, t.p1.x), t.p2.x);
         auto miny = std::min(std::min(t.p0.y, t.p1.y), t.p2.y);
         auto minz = std::min(std::min(t.p0.z, t.p1.z), t.p2.z);
@@ -130,8 +124,8 @@ class AABB {
         auto maxz = std::max(std::max(t.p0.z, t.p1.z), t.p2.z);
 
         return (minx <= max_point.x && maxx >= min_point.x) &&
-        (miny <= max_point.y && maxy >= min_point.y) &&
-        (minz <= max_point.z && maxz >= min_point.z);
+               (miny <= max_point.y && maxy >= min_point.y) &&
+               (minz <= max_point.z && maxz >= min_point.z);
     }
 
     template<typename T>
