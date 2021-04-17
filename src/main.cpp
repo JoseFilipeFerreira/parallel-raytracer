@@ -257,7 +257,7 @@ int main(int argc, char* argv[]) {
     auto end_time = std::chrono::high_resolution_clock::now();
 
     std::cerr
-        << "\nDuration: "
+        << "\nRender time: "
         << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count()
         << std::endl;
 

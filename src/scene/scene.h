@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <mutex>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -180,7 +181,10 @@ class BVH {
                         new_leaf.push_back(triangle);
                     }
                 }
-                if (new_leaf.size() > 0) new_nodes.emplace_back(new_aabb, std::move(new_leaf));
+                if (new_leaf.size() > 0) {
+                    auto new_node = BVH(new_aabb, std::move(new_leaf));
+                    new_nodes.push_back(new_node);
+                }
             }
             children = std::move(new_nodes);
         }
@@ -350,7 +354,16 @@ class TreeScene {
 
         std::cerr << "n triangles:" << triangles.size() << "\n";
 
-        return TreeScene(BVH::from_triangles(std::move(triangles)), light_sources);
+        auto start_time = std::chrono::high_resolution_clock::now();
+        auto bvh = BVH::from_triangles(std::move(triangles));
+        auto end_time = std::chrono::high_resolution_clock::now();
+
+        std::cerr
+            << "\nTree generation time: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count()
+            << std::endl;
+
+        return TreeScene(bvh, light_sources);
     }
 };
 } // namespace tracer
