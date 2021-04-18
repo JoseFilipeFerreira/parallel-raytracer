@@ -51,9 +51,9 @@ linkcolor=black}
 \pagebreak
 
 \chapter{Introdução}
-\textit{Raytracing} é uma técnica de renderização utilixada em computação
+\textit{Raytracing} é uma técnica de renderização utilizada em computação
 gráfica para a criação de imagens que consiste em simular o percurso de raios de
-luz à medida que se propagam pelo ambiente.
+luz à medida que se propagam e interagem com o ambiente.
 
 Este tipo de algoritmos permite simular múltiplos efeitos óticos de materiais,
 tais como reflexão e refração. No entanto, apesar de ser possível produzir
@@ -68,13 +68,13 @@ aumento de performance de uma implementação simples de um algoritmo de
 
 \section{Algoritmo Sequencial}
 
-Uma das abordagens sequencial mais simples consiste em calcular sequencialmente cada
-pixel da imagem seguindo a ordem de calculo linha a linha.
+Uma das abordagens sequenciais mais simples consiste em calcular sequencialmente
+cada pixel da imagem seguindo a ordem de calculo linha a linha.
 
 Para cada pixel lanca-se um raio com origem na câmara e procura-se se ele
 intersecta algum triângulo da cena a ser renderizada. Caso intersecte
 verifica-se se esse dado triângulo está diretamente em linha de visão com uma
-das fontes de luz do ambiente e se, por isso, esta iluminado ou esta na sombra
+das fontes de luz do ambiente e se, por isso, está iluminado ou está na sombra
 (Figura \ref{fig:raytrace}).
 
 \begin{figure}[h]
@@ -84,10 +84,10 @@ das fontes de luz do ambiente e se, por isso, esta iluminado ou esta na sombra
         \label{fig:raytrace}
 \end{figure}
 
-A cena é representada como uma lista de formas, sendo que cada forma contem
-uma lista de triângulos e o material a constitui. Desta forma, para encontrar os
-triângulos que um raio intersecta é necessário percorrer todos os triângulos
-contidos na cena.
+A cena é representada como uma lista de formas, sendo que cada forma contém
+uma lista de triângulos e o material que a constitui. Desta forma, para
+encontrar os triângulos que um raio intersecta é necessário percorrer todas as
+formas e todos os triângulos contidos na cena.
 
 Uma implementação deste tipo apresenta um crescimento exponencial de tempo de
 execução com o aumento da complexidade da cena fazendo com que seja fundamental
@@ -96,18 +96,18 @@ algoritmo.
 
 \section{Paralelização Simples}
 
-A primeira optimização realizada conciste em aplicar paralelismo simples ao
-algoritmo incial fazendo uso de \textit{std::thread}. Esta primeira implementação de
-paralelismo baseia-se em lançar uma \textit{thread} para cada linha da imagem
-com o objetivo que cada \textit{thread} calcule a sua respetiva linha. Visto que
-cada pixel apenas e modificado por uma \textit{thread} e, por isso, não existe
-concorrência ao nível do pixel, não é preciso qualquer tipo de \textit{lock}
-para o \textit{array} que representa a imagem.
+A primeira optimização realizada consiste em aplicar paralelismo simples ao
+algoritmo inicial fazendo uso de \textit{std::thread}. Esta primeira
+implementação de paralelismo baseia-se em lançar uma \textit{thread} para cada
+linha da imagem com o objetivo que cada \textit{thread} calcule a sua respetiva
+linha. Visto que cada pixel apenas é modificado por uma \textit{thread} e, por
+isso, não existe concorrência ao nível do pixel, não é preciso qualquer tipo de
+\textit{lock} para o \textit{array} que representa a imagem.
 
 Este método já apresenta melhoria significativas de performance. No entanto, o
 elevado número de \textit{threads} criadas em simultâneo (768 \textit{threads}
-para ma imagem 1024x768) leva a \textit{high cpu contention} e por isso perdas
-de performance.
+para ma imagem 1024x768) leva a \textit{high cpu contention} e a perdas de
+performance.
 
 \section{Paralelização com Queue}
 
@@ -119,9 +119,8 @@ maquina em que esta a correr o código). Estas \textit{threads} lêem de uma
 \textit{locked queue} qual é o trabalho que devem executar em seguida
 finalizando a sua execução apenas quando a \textit{queue} estiver vazia. Cada
 trabalho na \textit{queue} indica em que linha é que se deve começar a
-renderizar e em que linha se deve acabar.
-
-Em seguida a \textit{queue} é preenchida com todos os trabalhos necessários para
+renderizar e em que linha se deve acabar. Em seguida a \textit{queue} é
+preenchida com todos os trabalhos necessários para
 completar a imagem.
 
 Esta optimização resolveu o problema de \textit{high cpu contention} criado pela
@@ -143,12 +142,20 @@ Existem vários métodos para otimizar a procura de que triângulo um raio
 interceta numa cena. Uma das mais utilizadas e a que foi explorada neste projeto
 chama-se \textit{bounding volume hierarchy}. Este método consiste em converter a
 estrutura de dados numa árvore, em que cada nodo contem um volume que engloba
-todos os sub-nodos e folhas e que as folhas contém listas de triângulos.
+todos os sub-nodos e que as folhas contém formas (Figura \ref{fig:bvh}).
+
+\begin{figure}[h]
+    \centering
+        \includegraphics[width=0.8\textwidth]{images/bvh.png}
+        \caption{Representacao de um BVH simples}
+        \label{fig:bvh}
+\end{figure}
 
 O tipo de volume que foi escolhido denomina-se de \textit{axis aligned bounding
-box}(AABB) em que as faces da caixa estão alinhadas com os dos eixos das coordenas.
+box}(AABB) em que as faces da caixa estão alinhadas com os eixos das coordenas.
 Desta forma os cálculos feitos sobre estes volumes são mais simples e por isso
-extremamente rápidos.
+extremamente rápidos. E as formas que se encontram nas folhas da BVH são listas
+de triângulos.
 
 Para gerar esta árvore primeiro calcula-se a AABB que engloba todos os
 triângulos da cena. Em seguida, divide-se essa caixa em 8 partes de volume
@@ -169,15 +176,29 @@ todos os triângulos de uma cena de forma a encontrar o correto.
 De forma a minimizar o impacto da criação da árvore no inicio do programa, foi
 aplicada uma paralelização fazendo uso de \textit{std::async}.
 
-Aquando da divisao de uma dada \textit{bounding box} é criada para cada um uma
-\textit{thread}. Esta divisao paralela apenas ocorre até um determinado nivel da
-arvore visto que se este limite nao existisse iriam ser criadas demasiadas
-threads voltando a surgir o problema de \textit{high cpu contention}.
+Aquando da divisão de uma dada \textit{bounding box} é criada para cada uma
+\textit{thread}. Esta divisão paralela apenas ocorre até um determinado nível da
+árvore visto que se este limite não existisse iriam ser criadas demasiadas
+\textit{threads} voltando a surgir o problema de \textit{high cpu contention}.
+
+Depois de de ser feita a implementação deste novo algoritmo, constatou-se que
+existiam artefactos que provavelmente advém de uma das AABB criadas com
+\textit{std::async} ser perdida deixando uma falha na imagem. No código entregue
+em anexo existe a função BVH::recursive\_parallel\_build no ficheiro
+src/scene/scene.h que apresenta o que foi desenvolvido até ao momento.
 
 \chapter{Comparação de Performance}
 
 Todas as medidas de performance foram feitas utilizando o método \textit{k-best}
-com k igual a 8 e utilizando o ficheiro \textit{CornellBox-Water.obj}.
+com k igual a 8 e utilizando o ficheiro \textit{CornellBox-Water.obj} (Figura
+\ref{fig:water}).
+
+\begin{figure}[h]
+    \centering
+        \includegraphics[width=0.8\textwidth]{images/water.png}
+        \caption{Renderização de CornellBox-Water.obj}
+        \label{fig:water}
+\end{figure}
 
 \begin{table}[h]
     \centering
@@ -193,7 +214,20 @@ com k igual a 8 e utilizando o ficheiro \textit{CornellBox-Water.obj}.
     \caption{Comparação de Performance da função de raytracer}
 \end{table}
 
-Assim, conseguiu-se obter um speedup de 291.354 vezes quando comparado com o
-algoritmo sequencial original.
+\begin{table}[h]
+    \centering
+    \begin{tabular}{|l|l|l|}
+        \hline
+                                  & tempo (ms) & speedup \\ \hline
+        geração de BVH sequencial & 22     & 1.00x \\ \hline
+        geração de BVH paralela   & -       & - \\ \hline
+    \end{tabular}
+    \caption{Comparação de Performance da geração de BVH}
+\end{table}
+
+Assim, fazendo uso de uma nova estrutura em forma de árvore para representar os
+dados e paralelização com \textit{locked queue},  conseguiu-se obter um
+\textit{speedup} de 291.35 vezes quando comparado com o algoritmo sequencial
+original.
 
 \end{document}
