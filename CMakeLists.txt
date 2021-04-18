@@ -13,8 +13,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake)
-include(cmake/config.cmake)
-include(cmake/ispc.cmake)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CONFIGURATION_TYPES "Debug;Release;RelWithDebInfo")
