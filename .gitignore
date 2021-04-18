@@ -39,3 +39,7 @@ cmake_install.cmake
 output.ppm
 .cache
 compile_commands.json
+
+*.aux
+*.log
+*.toc

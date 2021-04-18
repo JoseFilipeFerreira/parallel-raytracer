@@ -5,8 +5,10 @@
 #include "ray_triangle.h"
 
 #include <algorithm>
+#include <future>
 #include <iostream>
 #include <mutex>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -97,7 +99,6 @@ class AABB {
             AABB(
                 {min_point.x, min_point.y + vy, min_point.z},
                 {max_point.x - vx, max_point.y, max_point.z - vz}),
-
             AABB(
                 {min_point.x, min_point.y, min_point.z + vz},
                 {max_point.x - vx, max_point.y - vy, max_point.z}),
@@ -145,8 +146,8 @@ class BVH {
     using Nodes = std::vector<BVH>;
     using Leaves = std::vector<triangle>;
 
-    AABB aabb;
-    std::variant<Nodes, Leaves> children;
+    BVH(AABB aabb, Leaves&& leaves): aabb(aabb), children(leaves){};
+    BVH(AABB aabb, Nodes&& nodes): aabb(aabb), children(nodes){};
 
     template<typename R, typename F1, typename F2>
     struct Visitor {
@@ -168,10 +169,9 @@ class BVH {
         auto operator()(Leaves& l) -> R { return f2(l); }
     };
 
-  public:
-    BVH(AABB aabb, Leaves&& leaves): aabb(aabb) {
+    static auto recursive_build(AABB const aabb, Leaves&& leaves) -> BVH {
         if (aabb.volume() < 0.01 || leaves.size() < 8) {
-            children = std::move(leaves);
+            return BVH(aabb, std::move(leaves));
         } else {
             Nodes new_nodes;
             for (auto const& new_aabb : aabb.split()) {
@@ -182,13 +182,54 @@ class BVH {
                     }
                 }
                 if (new_leaf.size() > 0) {
-                    auto new_node = BVH(new_aabb, std::move(new_leaf));
+                    auto new_node = recursive_build(new_aabb, std::move(new_leaf));
                     new_nodes.push_back(new_node);
                 }
             }
-            children = std::move(new_nodes);
+
+            return BVH(aabb, std::move(new_nodes));
         }
     };
+
+    static auto
+    recursive_parallel_build(AABB const aabb, Leaves&& leaves, size_t max_parallel_level) -> BVH {
+        if (aabb.volume() < 0.01 || leaves.size() < 8) {
+            return BVH(aabb, std::move(leaves));
+        } else {
+            std::vector<std::future<std::optional<BVH>>> threads;
+
+            for (auto const& new_aabb : aabb.split()) {
+                threads.push_back(std::async([&]() -> std::optional<BVH> {
+                    Leaves new_leaf;
+                    for (auto const& triangle : leaves) {
+                        if (new_aabb.is_inside(triangle)) {
+                            new_leaf.push_back(triangle);
+                        }
+                    }
+                    if (new_leaf.size() > 0) {
+                        return (max_parallel_level > 0)
+                                   ? recursive_parallel_build(
+                                         new_aabb, std::move(new_leaf), max_parallel_level - 1)
+                                   : recursive_build(new_aabb, std::move(new_leaf));
+                    }
+                    return {};
+                }));
+            }
+
+            Nodes new_nodes;
+            for (auto& t : threads) {
+                if (auto new_node = t.get()) {
+                    new_nodes.push_back(*new_node);
+                }
+            }
+
+            return BVH(aabb, std::move(new_nodes));
+        }
+    };
+
+  public:
+    AABB aabb;
+    std::variant<Nodes, Leaves> children;
 
     static auto from_triangles(std::vector<triangle>&& triangles) -> BVH {
         auto c = triangles[0].com();
@@ -200,17 +241,18 @@ class BVH {
         auto maxz = c.z;
         for (auto const& triangle : triangles) {
             auto nc = triangle.com();
-            minx = (minx < nc.x) ? minx : nc.x;
-            miny = (miny < nc.y) ? miny : nc.y;
-            minz = (minz < nc.z) ? minz : nc.z;
-            maxx = (maxx > nc.x) ? maxx : nc.x;
-            maxy = (maxy > nc.y) ? maxy : nc.y;
-            maxz = (maxz > nc.z) ? maxz : nc.z;
+            minx = std::min(minx, nc.x);
+            miny = std::min(miny, nc.y);
+            minz = std::min(minz, nc.z);
+            maxx = std::max(maxx, nc.x);
+            maxy = std::max(maxy, nc.y);
+            maxz = std::max(maxz, nc.z);
         }
 
         auto aabb = AABB({minx, miny, minz}, {maxx, maxy, maxz});
 
-        return BVH(aabb, std::move(triangles));
+        /* return recursive_parallel_build(aabb, std::move(triangles), 0); */
+        return recursive_build(aabb, std::move(triangles));
     }
 
     template<typename R, typename F1, typename F2>
